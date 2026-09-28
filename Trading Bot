@@ -1,0 +1,65 @@
+import os
+import json
+from flask import Flask, request, jsonify
+from binance.client import Client
+from binance.enums import *
+
+app = Flask(__name__)
+
+API_KEY = os.environ.get("BINANCE_API_KEY")
+API_SECRET = os.environ.get("BINANCE_API_SECRET")
+
+client = Client(API_KEY, API_SECRET)
+
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    try:
+        data = json.loads(request.data)
+        symbol = data.get('symbol')
+        action = data.get('action')
+        leverage = int(data.get('leverage', 20))
+        quantity = float(data.get('quantity'))
+        
+        client.futures_change_leverage(symbol=symbol, leverage=leverage)
+        ticker = client.futures_symbol_ticker(symbol=symbol)
+        entry_price = float(ticker['price'])
+        
+        if action.lower() == 'buy':
+            order = client.futures_create_order(
+                symbol=symbol, side=SIDE_BUY, type=ORDER_TYPE_MARKET, quantity=quantity
+            )
+            stop_price = round(entry_price * 0.99, 2)
+            tp1_price = round(entry_price * 1.015, 2)
+            
+            client.futures_create_order(
+                symbol=symbol, side=SIDE_SELL, type=FUTURE_ORDER_TYPE_STOP_MARKET,
+                stopPrice=stop_price, closePosition=True
+            )
+            client.futures_create_order(
+                symbol=symbol, side=SIDE_SELL, type=FUTURE_ORDER_TYPE_TAKE_PROFIT_MARKET,
+                stopPrice=tp1_price, closePosition=True
+            )
+            
+        elif action.lower() == 'sell':
+            order = client.futures_create_order(
+                symbol=symbol, side=SIDE_SELL, type=ORDER_TYPE_MARKET, quantity=quantity
+            )
+            stop_price = round(entry_price * 1.01, 2)
+            tp1_price = round(entry_price * 0.985, 2)
+            
+            client.futures_create_order(
+                symbol=symbol, side=SIDE_BUY, type=FUTURE_ORDER_TYPE_STOP_MARKET,
+                stopPrice=stop_price, closePosition=True
+            )
+            client.futures_create_order(
+                symbol=symbol, side=SIDE_BUY, type=FUTURE_ORDER_TYPE_TAKE_PROFIT_MARKET,
+                stopPrice=tp1_price, closePosition=True
+            )
+
+        return jsonify({"status": "success"}), 200
+
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 400
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000)
